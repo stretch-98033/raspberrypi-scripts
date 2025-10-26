@@ -1,5 +1,6 @@
 #!/bin/bash
 #updated 10.26.2025 at 4:51pm PST
+#test push to git
 
 # Paths
 SIDEBAR_FILE="/var/www/html/admin/scripts/lua/sidebar.lp"
