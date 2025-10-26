@@ -1,4 +1,5 @@
 #!/bin/bash
+#updated 10.26.2025 at 4:51pm PST
 
 # Paths
 SIDEBAR_FILE="/var/www/html/admin/scripts/lua/sidebar.lp"
