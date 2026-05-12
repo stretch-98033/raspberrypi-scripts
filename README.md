@@ -1,12 +1,38 @@
 # Pi-hole Sidebar Hardware Monitor
 
-Adds Raspberry Pi temperature and dynamic fan speed display to the Pi-hole sidebar.
+Adds Raspberry Pi temperature and dynamic fan speed monitoring to the Pi-hole v6 sidebar.
 
-This customization is designed for Raspberry Pi OS running Pi-hole v6 / `pihole-FTL`, where PHP may not execute from the Pi-hole admin directory. Instead of using a PHP endpoint, this setup generates a static JSON file on the Pi and refreshes it with a systemd timer.
+This customization is designed for Raspberry Pi OS running Pi-hole v6 with the embedded `pihole-FTL` web server, where PHP execution may not be available from the Pi-hole admin directory. Instead of using PHP, this implementation generates a static JSON file locally and refreshes it with a systemd timer.
 
-## What this adds
+---
 
-The Pi-hole sidebar will show:
+# Features
+
+- Live CPU temperature display in both Fahrenheit and Celsius
+- Dynamic fan RPM discovery through Linux hwmon
+- Automatic sidebar refresh without page reload
+- No PHP required
+- Compatible with Pi-hole v6 / `pihole-FTL`
+- Safe reinstallation after Pi-hole updates
+- Automatic sidebar backup before modification
+- Lightweight systemd timer-based architecture
+
+---
+
+# Compatibility
+
+Tested on:
+
+- Raspberry Pi OS
+- Pi-hole v6
+- `pihole-FTL` embedded web server
+- Raspberry Pi PWM fan
+
+This implementation avoids PHP and should remain compatible with future Pi-hole v6 installations that do not execute PHP from the admin directory.
+
+---
+
+# Example Sidebar Display
 
 ```text
 Temp: 123.3°F
@@ -14,21 +40,37 @@ Temp: 50.7°C
 Fan Speed: 2510 RPM
 ```
 
-Fan speed is discovered dynamically from Linux hwmon paths, so future fans should be picked up automatically if Raspberry Pi OS exposes them under:
+The sidebar text intentionally stays compact.
+
+Detailed sensor labels and paths remain available in the tooltip.
+
+---
+
+# Fan Detection
+
+Fan speed is discovered dynamically from Linux hwmon paths.
+
+Compatible fan sensors exposed through hwmon should be detected automatically if Raspberry Pi OS exposes them under:
 
 ```text
 /sys/class/hwmon/hwmon*/fan*_input
 ```
 
-This should support the Raspberry Pi PWM fan and may support PoE / PoE+ HAT fans if the OS exposes their fan RPM through hwmon.
+This should support:
 
-## How it works
+- Raspberry Pi PWM fan
+- Some PoE / PoE+ HAT fans
+- Other compatible hwmon-exposed fan devices
+
+---
+
+# Architecture
 
 This customization has three parts:
 
-1. A local script reads hardware status from `/sys`.
-2. A systemd timer refreshes a JSON file every few seconds.
-3. The Pi-hole sidebar JavaScript reads that JSON file and updates the display without a page refresh.
+1. A local shell script reads hardware status from `/sys`
+2. A systemd timer refreshes a JSON file every few seconds
+3. Sidebar JavaScript polls the JSON endpoint and updates the display live
 
 The browser reads:
 
@@ -36,15 +78,17 @@ The browser reads:
 /admin/custom/pi-hwmon.json
 ```
 
-That file is generated locally at:
+Generated locally at:
 
 ```text
 /var/www/html/admin/custom/pi-hwmon.json
 ```
 
-## Files installed
+---
 
-The installer creates or updates these files:
+# Files Installed
+
+The installer creates or updates:
 
 ```text
 /usr/local/bin/pi-hwmon-json
@@ -53,7 +97,9 @@ The installer creates or updates these files:
 /var/www/html/admin/custom/pi-hwmon.json
 ```
 
-## Files modified
+---
+
+# Files Modified
 
 The installer modifies:
 
@@ -61,7 +107,7 @@ The installer modifies:
 /var/www/html/admin/scripts/lua/sidebar.lp
 ```
 
-The sidebar customization should be wrapped with these markers:
+The injected sidebar block is wrapped with:
 
 ```html
 <!-- BEGIN CUSTOM HWMON -->
@@ -69,9 +115,31 @@ The sidebar customization should be wrapped with these markers:
 <!-- END CUSTOM HWMON -->
 ```
 
-## Backups created
+---
 
-Before modifying the Pi-hole sidebar, the installer should create a timestamped backup:
+# Pi-hole v6 Insertion Marker
+
+Pi-hole v6 currently uses:
+
+```html
+<span id="memory"></span>
+```
+
+The installer injects the sidebar block immediately after this element.
+
+Older insertion logic using:
+
+```html
+<span id="memory"><span>
+```
+
+will fail on current Pi-hole v6 builds.
+
+---
+
+# Backups
+
+Before modifying the sidebar, the installer creates a timestamped backup:
 
 ```text
 /var/www/html/admin/scripts/lua/sidebar.lp.backup-before-hwmon-YYYYMMDD-HHMMSS
@@ -83,28 +151,71 @@ Example:
 /var/www/html/admin/scripts/lua/sidebar.lp.backup-before-hwmon-20260511-175600
 ```
 
-Keep this backup until you confirm the Pi-hole UI works correctly.
+Keep this backup until the UI is verified working.
 
-## Install
+---
 
-Clone this repo onto the Pi:
+# Install
+
+Clone the repository:
 
 ```bash
-git clone https://github.com/YOUR-USER/YOUR-REPO.git
-cd YOUR-REPO
+git clone https://github.com/stretch-98033/raspberrypi-scripts.git
+cd raspberrypi-scripts/pihole
 ```
 
-Run the installer:
+Quick install:
+
+```bash
+git clone https://github.com/stretch-98033/raspberrypi-scripts.git && \
+cd raspberrypi-scripts/pihole && \
+sudo bash install-pihole-hwmon-sidebar.sh
+```
+
+Or run manually:
 
 ```bash
 sudo bash install-pihole-hwmon-sidebar.sh
 ```
 
-Then open the Pi-hole admin page and confirm the sidebar shows temperature and fan speed.
+After installation:
 
-## Verify installation
+1. Open the Pi-hole admin page
+2. Refresh the browser
+3. Verify temperature and fan RPM appear in the sidebar
 
-### 1. Confirm the fan is visible to Raspberry Pi OS
+---
+
+# Idempotent Reinstall Behavior
+
+The installer is designed to be safely re-runnable.
+
+If an existing custom block is detected between:
+
+```html
+<!-- BEGIN CUSTOM HWMON -->
+```
+
+and:
+
+```html
+<!-- END CUSTOM HWMON -->
+```
+
+the installer replaces the existing block instead of appending duplicate content.
+
+This is useful after:
+
+- Pi-hole updates
+- Sidebar corruption
+- Snippet modifications
+- Reinstallation
+
+---
+
+# Verify Installation
+
+## 1. Confirm fan visibility in Linux
 
 ```bash
 for f in /sys/class/hwmon/hwmon*/fan*_input; do
@@ -113,15 +224,17 @@ for f in /sys/class/hwmon/hwmon*/fan*_input; do
 done
 ```
 
-Expected output should look similar to:
+Example output:
 
 ```text
 /sys/class/hwmon/hwmon1/fan1_input: 2510 RPM
 ```
 
-If this command returns nothing, Raspberry Pi OS is not exposing a fan RPM sensor through hwmon.
+If this returns nothing, the OS is not exposing fan RPM sensors through hwmon.
 
-### 2. Confirm hwmon device names
+---
+
+## 2. Confirm hwmon device names
 
 ```bash
 for d in /sys/class/hwmon/hwmon*; do
@@ -130,16 +243,16 @@ for d in /sys/class/hwmon/hwmon*; do
 done
 ```
 
-Example output:
+Example:
 
 ```text
 /sys/class/hwmon/hwmon0 name: cpu_thermal
 /sys/class/hwmon/hwmon1 name: pwmfan
-/sys/class/hwmon/hwmon2 name: rp1_adc
-/sys/class/hwmon/hwmon3 name: rpi_volt
 ```
 
-### 3. Confirm the JSON generator works
+---
+
+## 3. Confirm JSON generation
 
 Run:
 
@@ -147,51 +260,51 @@ Run:
 sudo /usr/local/bin/pi-hwmon-json
 ```
 
-Then inspect the JSON:
+Inspect:
 
 ```bash
 cat /var/www/html/admin/custom/pi-hwmon.json
 ```
 
-Expected output:
+Example:
 
 ```json
 {"temperature":{"c":50.7,"f":123.3,"path":"/sys/class/thermal/thermal_zone0/temp"},"fans":[{"label":"pwmfan fan1","rpm":2510,"path":"/sys/class/hwmon/hwmon1/fan1_input"}]}
 ```
 
-RPM and temperature values will vary.
+---
 
-### 4. Confirm the JSON is reachable through the Pi-hole web server
+## 4. Confirm JSON endpoint
 
 ```bash
 curl http://localhost/admin/custom/pi-hwmon.json
 ```
 
-Expected output should match the JSON file:
+Output should match the JSON file.
 
-```json
-{"temperature":{"c":50.7,"f":123.3,"path":"/sys/class/thermal/thermal_zone0/temp"},"fans":[{"label":"pwmfan fan1","rpm":2510,"path":"/sys/class/hwmon/hwmon1/fan1_input"}]}
-```
+---
 
-### 5. Confirm the systemd timer is active
+## 5. Confirm timer status
 
 ```bash
 systemctl status pi-hwmon-json.timer --no-pager
 ```
 
-Expected status:
+Expected:
 
 ```text
 Active: active (waiting)
 ```
 
-### 6. Confirm the systemd service is succeeding
+---
+
+## 6. Confirm service success
 
 ```bash
 systemctl status pi-hwmon-json.service --no-pager
 ```
 
-Expected result:
+Expected:
 
 ```text
 status=0/SUCCESS
@@ -203,29 +316,33 @@ It is normal for the service to show:
 Active: inactive (dead)
 ```
 
-This is a `oneshot` service. It runs, generates the JSON file, exits successfully, and waits for the timer to run it again.
+This is a `Type=oneshot` service.
 
-### 7. Confirm the JSON file is being refreshed
+---
+
+## 7. Confirm JSON refresh activity
 
 ```bash
 stat /var/www/html/admin/custom/pi-hwmon.json
 ```
 
-Check the `Modify` timestamp. It should update every few seconds while the timer is active.
+The `Modify` timestamp should update repeatedly.
 
-### 8. Confirm the sidebar snippet was injected
+---
+
+## 8. Confirm sidebar injection
 
 ```bash
 sudo grep -n "BEGIN CUSTOM HWMON\|pi-hwmon.json\|Fan Speed\|END CUSTOM HWMON" /var/www/html/admin/scripts/lua/sidebar.lp
 ```
 
-Expected output should show the custom block and the JSON endpoint.
+---
 
-## Browser verification
+# Browser Verification
 
-Open the Pi-hole admin page.
+Open the Pi-hole admin UI.
 
-Expected sidebar display:
+Expected sidebar:
 
 ```text
 Temp: 123.3°F
@@ -233,75 +350,89 @@ Temp: 50.7°C
 Fan Speed: 2510 RPM
 ```
 
-The exact values will vary.
-
-The fan tooltip should preserve the sensor detail, such as:
+Tooltip example:
 
 ```text
 pwmfan fan1: /sys/class/hwmon/hwmon1/fan1_input
 ```
 
-## Troubleshooting
+---
 
-### Sidebar stays on `Loading...`
+# Troubleshooting
 
-Check the JSON file:
+## Sidebar stays on `Loading...`
+
+Common symptom:
+
+```text
+Temp: Loading...
+Fan Speed: Loading...
+```
+
+First verify the JSON endpoint:
 
 ```bash
 curl http://localhost/admin/custom/pi-hwmon.json
 ```
 
-If that works, open browser DevTools:
+If the JSON works, inspect browser JavaScript errors:
 
-1. Right-click the Pi-hole page.
-2. Select **Inspect**.
-3. Open the **Console** tab.
-4. Refresh the page.
-5. Look for JavaScript errors.
+1. Right-click the page
+2. Select **Inspect**
+3. Open the **Console**
+4. Refresh the page
 
-Common issue:
+Common error:
 
 ```text
 Uncaught SyntaxError: Invalid or unexpected token
 ```
 
-If this happens, inspect the injected sidebar block:
+Inspect the injected sidebar block:
 
 ```bash
-sudo sed -n '1,220p' /var/www/html/admin/scripts/lua/sidebar.lp
+sudo sed -n '/BEGIN CUSTOM HWMON/,/END CUSTOM HWMON/p' /var/www/html/admin/scripts/lua/sidebar.lp
 ```
 
-Look for broken JavaScript strings, especially around `.join(...)`.
+---
 
-### Fan speed is cut off in the sidebar
+## Malformed snippet file
 
-The visible fan text should only show RPM:
+A corrupted snippet file can inject broken JavaScript into `sidebar.lp`.
+
+Validate the snippet:
+
+```bash
+grep -nE '<script>|</script>|BEGIN CUSTOM HWMON|END CUSTOM HWMON' sidebar-custom-snippet.html
+```
+
+If HTML appears inside JavaScript function bodies, replace the snippet with a clean repository copy.
+
+---
+
+## Fan speed text is too long
+
+The visible sidebar text should remain compact:
 
 ```text
 Fan Speed: 2510 RPM
 ```
 
-Do not show the full label in the sidebar text if it is too long.
+Long labels and paths should remain in the tooltip only.
 
-The display line should use logic equivalent to:
+The display logic should use:
 
 ```javascript
-fanText.innerText = "Fan Speed: " + fans.map(function (fan) {
-  return fan.rpm + " RPM";
-}).join(" | ");
+fanText.innerText = "Fan Speed: " + lowestRpm + " RPM";
 ```
 
-Keep the long label/path in the tooltip instead.
+---
 
-### JSON updates but browser does not update
+## Browser cache prevents updates
 
-Pi-hole may return a cache header like:
+Pi-hole may return aggressive cache headers.
 
-```text
-Cache-Control: max-age=3600
-```
-
-The sidebar JavaScript should fetch the JSON with a timestamp query string:
+The sidebar JavaScript avoids stale cache using:
 
 ```javascript
 fetch(ENDPOINT + "?t=" + Date.now(), {
@@ -309,11 +440,11 @@ fetch(ENDPOINT + "?t=" + Date.now(), {
 });
 ```
 
-This prevents the browser from using stale cached JSON.
+---
 
-### PHP endpoint does not work
+## PHP endpoint does not execute
 
-On Pi-hole v6 / `pihole-FTL`, PHP may not execute from the admin directory. A `.php` file may be served as plain text instead of executing.
+Pi-hole v6 may serve PHP source directly instead of executing it.
 
 Test example:
 
@@ -321,11 +452,13 @@ Test example:
 curl -i http://localhost/admin/scripts/pi-hwmon-test.php
 ```
 
-If the response shows PHP source code, do not use PHP for this customization.
+If raw PHP source appears, PHP execution is unavailable.
 
-This repo intentionally avoids PHP and uses a static JSON file refreshed by systemd.
+This implementation intentionally avoids PHP entirely.
 
-### No fans are detected
+---
+
+## No fans detected
 
 Run:
 
@@ -336,89 +469,85 @@ for f in /sys/class/hwmon/hwmon*/fan*_input; do
 done
 ```
 
-If no output appears, the OS is not exposing any fan RPM sensors through hwmon.
+If no output appears, Linux is not exposing fan RPM sensors through hwmon.
 
-This customization can only display fans that Raspberry Pi OS exposes under:
+---
+
+# Reapply After Pi-hole Updates
+
+Pi-hole updates may overwrite:
 
 ```text
-/sys/class/hwmon/hwmon*/fan*_input
+/var/www/html/admin/scripts/lua/sidebar.lp
 ```
 
-A PoE / PoE+ HAT fan will only appear if the kernel/firmware exposes its tachometer reading through hwmon.
-
-## Restart or reapply
-
-After a Pi-hole update, the sidebar file may be overwritten.
-
-Re-run:
+Re-run the installer:
 
 ```bash
-cd YOUR-REPO
+cd raspberrypi-scripts/pihole
 sudo bash install-pihole-hwmon-sidebar.sh
 ```
 
-Then verify:
+Verify:
 
 ```bash
 systemctl status pi-hwmon-json.timer --no-pager
 curl http://localhost/admin/custom/pi-hwmon.json
 ```
 
-Refresh the Pi-hole admin page.
+Refresh the browser.
 
-## Rollback
+---
 
-### Option 1: Restore the sidebar backup
+# Rollback
 
-Find available backups:
+## Restore sidebar backup
+
+List backups:
 
 ```bash
 ls -l /var/www/html/admin/scripts/lua/sidebar.lp.backup-before-hwmon-*
 ```
 
-Restore the desired backup:
+Restore:
 
 ```bash
 sudo cp /var/www/html/admin/scripts/lua/sidebar.lp.backup-before-hwmon-YYYYMMDD-HHMMSS /var/www/html/admin/scripts/lua/sidebar.lp
 ```
 
-Replace `YYYYMMDD-HHMMSS` with the actual timestamp.
+---
 
-### Option 2: Remove only the custom sidebar block
+## Remove only the custom block
 
-If the sidebar block is wrapped with markers, remove it manually:
+Edit:
 
 ```bash
 sudo nano /var/www/html/admin/scripts/lua/sidebar.lp
 ```
 
-Delete everything from:
+Delete everything between:
 
 ```html
 <!-- BEGIN CUSTOM HWMON -->
 ```
 
-through:
+and:
 
 ```html
 <!-- END CUSTOM HWMON -->
 ```
 
-Save and exit.
+---
 
-### Option 3: Disable the JSON refresh timer
+## Disable timer
 
 ```bash
 sudo systemctl disable --now pi-hwmon-json.timer
 ```
 
-Confirm it stopped:
+---
 
-```bash
-systemctl status pi-hwmon-json.timer --no-pager
-```
-
-### Option 4: Remove installed files
+## Remove installed files
 
 ```bash
 sudo rm -f /usr/local/bin/pi-hwmon-json
@@ -428,15 +557,15 @@ sudo rm -f /var/www/html/admin/custom/pi-hwmon.json
 sudo systemctl daemon-reload
 ```
 
-Optional: remove the custom web directory if it is empty:
+Optional:
 
 ```bash
 sudo rmdir /var/www/html/admin/custom 2>/dev/null || true
 ```
 
-## Full clean removal
+---
 
-To fully remove this customization:
+# Full Clean Removal
 
 ```bash
 sudo systemctl disable --now pi-hwmon-json.timer
@@ -447,15 +576,11 @@ sudo rm -f /var/www/html/admin/custom/pi-hwmon.json
 sudo systemctl daemon-reload
 ```
 
-Then restore the original sidebar:
+Restore the sidebar backup afterward.
 
-```bash
-sudo cp /var/www/html/admin/scripts/lua/sidebar.lp.backup-before-hwmon-YYYYMMDD-HHMMSS /var/www/html/admin/scripts/lua/sidebar.lp
-```
+---
 
-## Files and paths reference
-
-### Hardware paths read by the generator
+# Hardware Paths Used
 
 Temperature:
 
@@ -463,13 +588,13 @@ Temperature:
 /sys/class/thermal/thermal_zone0/temp
 ```
 
-Fan speed:
+Fan RPM:
 
 ```text
 /sys/class/hwmon/hwmon*/fan*_input
 ```
 
-Fan labels, if available:
+Fan labels:
 
 ```text
 /sys/class/hwmon/hwmon*/fan*_label
@@ -481,30 +606,37 @@ Hwmon device names:
 /sys/class/hwmon/hwmon*/name
 ```
 
-### Web JSON output
+---
+
+# Web Paths
+
+Generated JSON:
 
 ```text
 /var/www/html/admin/custom/pi-hwmon.json
 ```
 
-Browser path:
+Browser endpoint:
 
 ```text
 /admin/custom/pi-hwmon.json
 ```
 
-### Pi-hole sidebar file
+Pi-hole sidebar:
 
 ```text
 /var/www/html/admin/scripts/lua/sidebar.lp
 ```
 
-## Notes
+---
 
-- The systemd service is intentionally `Type=oneshot`.
-- The timer refreshes the JSON file repeatedly.
-- The browser polls the JSON file every few seconds.
-- The JSON endpoint is static and read-only from the browser’s perspective.
-- No PHP or CGI execution is required.
-- The customization does not write to `/sys`; it only reads sensor values.
-- Running the installer after a Pi-hole update should restore the customization.
+# Notes
+
+- The systemd service intentionally uses `Type=oneshot`
+- The timer refreshes the JSON repeatedly
+- The browser polls the JSON endpoint every few seconds
+- The browser endpoint is read-only
+- No PHP or CGI execution is required
+- The customization only reads sensor data
+- Re-running the installer after Pi-hole updates should restore the customization
+```
