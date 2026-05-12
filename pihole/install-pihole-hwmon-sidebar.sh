@@ -184,7 +184,7 @@ else:
         finish = sidebar.index(old_end, start) + len(old_end)
         sidebar = sidebar[:start] + snippet.rstrip() + sidebar[finish:]
     else:
-        marker = '<span id="memory"><span>'
+        marker = '<span id="memory"></span>'
         if marker not in sidebar:
             raise SystemExit("ERROR: Could not find existing custom block or insertion marker in sidebar.lp.")
 

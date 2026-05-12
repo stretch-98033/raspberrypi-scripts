@@ -1,0 +1,157 @@
+<!-- BEGIN CUSTOM HWMON -->
+<br>
+<span id="temperatureF">
+  &nbsp;<i id="tempIconF" class="fa-solid fa-temperature-three-quarters text-green-light fa-lg" title="Loading..."></i>&nbsp;&nbsp;
+  <span id="tempTextF">Temp: Loading...</span>
+</span><br/>
+
+<span id="temperatureC">
+  &nbsp;<i id="tempIconC" class="fa-solid fa-temperature-three-quarters text-green-light fa-lg" title="Loading..."></i>&nbsp;&nbsp;
+  <span id="tempTextC">Temp: Loading...</span>
+</span><br/>
+
+<span id="fanL_speed" class="text-base">
+  <i id="fanIcon" class="fa-solid fa-fan text-green-light fa-lg" title="Loading..."></i>&nbsp;&nbsp;
+  <span id="fanText">Fan Speed: Loading...</span>
+</span><br/>
+
+<script>
+(function () {
+  const ENDPOINT = "/admin/custom/pi-hwmon.json";
+  const REFRESH_MS = 3000;
+
+  function temperatureIconClass(celsius) {
+    if (celsius >= 80) {
+      return "fa-solid fa-temperature-three-quarters text-red fa-2xl";
+    }
+
+    if (celsius >= 61) {
+      return "fa-solid fa-temperature-three-quarters text-yellow fa-xl";
+    }
+
+    return "fa-solid fa-temperature-three-quarters text-green-light fa-lg";
+  }
+
+  function fanClasses(rpm) {
+    if (rpm <= 1000) {
+      return {
+        iconClass: "fa-solid fa-fan text-red fa-2xl",
+        textClass: "text-red text-2xl"
+      };
+    }
+
+    if (rpm <= 1999) {
+      return {
+        iconClass: "fa-solid fa-fan text-yellow fa-xl",
+        textClass: "text-yellow text-xl"
+      };
+    }
+
+    return {
+      iconClass: "fa-solid fa-fan text-green-light fa-lg",
+      textClass: "text-green-light text-base"
+    };
+  }
+
+  function updateTemperature(temperature) {
+    const tempIconF = document.getElementById("tempIconF");
+    const tempIconC = document.getElementById("tempIconC");
+    const tempTextF = document.getElementById("tempTextF");
+    const tempTextC = document.getElementById("tempTextC");
+
+    if (!temperature || temperature.c === null || temperature.f === null) {
+      if (tempTextF) tempTextF.innerText = "Temp: N/A";
+      if (tempTextC) tempTextC.innerText = "Temp: N/A";
+      return;
+    }
+
+    const celsius = Number(temperature.c);
+    const fahrenheit = Number(temperature.f);
+    const iconClass = temperatureIconClass(celsius);
+
+    if (tempIconF) {
+      tempIconF.className = iconClass;
+      tempIconF.title = "Temperature Source: " + temperature.path;
+    }
+
+    if (tempIconC) {
+      tempIconC.className = iconClass;
+      tempIconC.title = "Temperature Source: " + temperature.path;
+    }
+
+    if (tempTextF) {
+      tempTextF.innerText = "Temp: " + fahrenheit.toFixed(1) + "°F";
+    }
+
+    if (tempTextC) {
+      tempTextC.innerText = "Temp: " + celsius.toFixed(1) + "°C";
+    }
+  }
+
+  function updateFans(fans) {
+    const fanIcon = document.getElementById("fanIcon");
+    const fanText = document.getElementById("fanText");
+
+    if (!fanIcon || !fanText) {
+      return;
+    }
+
+    if (!Array.isArray(fans) || fans.length === 0) {
+      fanIcon.className = "fa-solid fa-fan text-red fa-lg";
+      fanIcon.title = "No fan sensors found under /sys/class/hwmon";
+      fanText.className = "text-red text-base";
+      fanText.innerText = "Fan Speed: No fan sensors found";
+      return;
+    }
+
+    const lowestRpm = Math.min(...fans.map(function (fan) {
+      return Number(fan.rpm) || 0;
+    }));
+
+    const classes = fanClasses(lowestRpm);
+
+    fanIcon.className = classes.iconClass;
+    fanText.className = classes.textClass;
+
+    fanIcon.title = fans.map(function (fan) {
+      return fan.label + ": " + fan.path;
+    }).join("; ");
+
+    fanText.innerText = "Fan Speed: " + lowestRpm + " RPM";
+  }
+
+  async function refreshHardwareStatus() {
+    try {
+      const response = await fetch(ENDPOINT + "?t=" + Date.now(), {
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        throw new Error("HTTP " + response.status);
+      }
+
+      const data = await response.json();
+
+      updateTemperature(data.temperature);
+      updateFans(data.fans);
+    } catch (error) {
+      const fanIcon = document.getElementById("fanIcon");
+      const fanText = document.getElementById("fanText");
+
+      if (fanIcon) {
+        fanIcon.className = "fa-solid fa-fan text-red fa-lg";
+        fanIcon.title = "Unable to read hardware status: " + error.message;
+      }
+
+      if (fanText) {
+        fanText.className = "text-red text-base";
+        fanText.innerText = "Fan Speed: Error reading hardware status";
+      }
+    }
+  }
+
+  refreshHardwareStatus();
+  setInterval(refreshHardwareStatus, REFRESH_MS);
+})();
+</script>
+<!-- END CUSTOM HWMON -->
