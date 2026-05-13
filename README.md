@@ -13,9 +13,13 @@ This customization is designed for Raspberry Pi OS running Pi-hole v6 with the e
 - Automatic sidebar refresh without page reload
 - No PHP required
 - Compatible with Pi-hole v6 / `pihole-FTL`
-- Safe reinstallation after Pi-hole updates
+- Safe idempotent reinstall behavior
 - Automatic sidebar backup before modification
 - Lightweight systemd timer-based architecture
+- Built-in install / uninstall / status actions
+- Hardened file handling and symlink protection
+- Automatic cleanup during uninstall
+- Safe replacement of existing injected blocks
 
 ---
 
@@ -164,18 +168,24 @@ git clone https://github.com/stretch-98033/raspberrypi-scripts.git
 cd raspberrypi-scripts/pihole
 ```
 
+Run the installer:
+
+```bash
+sudo ./install-pihole-hwmon-sidebar.sh install
+```
+
+Or:
+
+```bash
+sudo bash install-pihole-hwmon-sidebar.sh install
+```
+
 Quick install:
 
 ```bash
 git clone https://github.com/stretch-98033/raspberrypi-scripts.git && \
 cd raspberrypi-scripts/pihole && \
-sudo bash install-pihole-hwmon-sidebar.sh
-```
-
-Or run manually:
-
-```bash
-sudo bash install-pihole-hwmon-sidebar.sh
+sudo ./install-pihole-hwmon-sidebar.sh install
 ```
 
 After installation:
@@ -183,6 +193,74 @@ After installation:
 1. Open the Pi-hole admin page
 2. Refresh the browser
 3. Verify temperature and fan RPM appear in the sidebar
+
+---
+
+# Script Usage
+
+```text
+sudo ./install-pihole-hwmon-sidebar.sh install
+sudo ./install-pihole-hwmon-sidebar.sh uninstall
+sudo ./install-pihole-hwmon-sidebar.sh status
+```
+
+Optional environment overrides:
+
+```bash
+SIDEBAR_FILE=/path/to/sidebar.lp
+SNIPPET_FILE=/path/to/sidebar-custom-snippet.html
+TIMER_INTERVAL=15sec
+```
+
+Example custom timer interval:
+
+```bash
+sudo TIMER_INTERVAL=30sec ./install-pihole-hwmon-sidebar.sh install
+```
+
+---
+
+# Status Command
+
+The status action reports:
+
+- Active sidebar path
+- JSON output path
+- systemd timer state
+- Current generated JSON contents
+
+Run:
+
+```bash
+sudo ./install-pihole-hwmon-sidebar.sh status
+```
+
+Example:
+
+```text
+Sidebar: /var/www/html/admin/scripts/lua/sidebar.lp
+JSON: /var/www/html/admin/custom/pi-hwmon.json
+```
+
+---
+
+# Uninstall
+
+The uninstall action safely removes:
+
+- systemd timer
+- systemd service
+- JSON generator
+- generated JSON file
+- injected sidebar block
+
+Run:
+
+```bash
+sudo ./install-pihole-hwmon-sidebar.sh uninstall
+```
+
+The script intentionally leaves sidebar backups in place.
 
 ---
 
@@ -210,6 +288,25 @@ This is useful after:
 - Sidebar corruption
 - Snippet modifications
 - Reinstallation
+
+---
+
+# Security / Hardening
+
+The installer includes several safety protections:
+
+- Refuses to overwrite symlinks
+- Refuses to remove non-regular files
+- Uses atomic JSON generation with temporary files
+- Uses strict shell execution flags:
+
+```bash
+set -euo pipefail
+```
+
+- Validates required commands before execution
+- Validates snippet existence and non-empty content
+- Uses controlled root-owned file installation
 
 ---
 
@@ -410,24 +507,6 @@ If HTML appears inside JavaScript function bodies, replace the snippet with a cl
 
 ---
 
-## Fan speed text is too long
-
-The visible sidebar text should remain compact:
-
-```text
-Fan Speed: 2510 RPM
-```
-
-Long labels and paths should remain in the tooltip only.
-
-The display logic should use:
-
-```javascript
-fanText.innerText = "Fan Speed: " + lowestRpm + " RPM";
-```
-
----
-
 ## Browser cache prevents updates
 
 Pi-hole may return aggressive cache headers.
@@ -485,13 +564,13 @@ Re-run the installer:
 
 ```bash
 cd raspberrypi-scripts/pihole
-sudo bash install-pihole-hwmon-sidebar.sh
+sudo ./install-pihole-hwmon-sidebar.sh install
 ```
 
 Verify:
 
 ```bash
-systemctl status pi-hwmon-json.timer --no-pager
+sudo ./install-pihole-hwmon-sidebar.sh status
 curl http://localhost/admin/custom/pi-hwmon.json
 ```
 
@@ -499,7 +578,7 @@ Refresh the browser.
 
 ---
 
-# Rollback
+# Rollback / Recovery
 
 ## Restore sidebar backup
 
@@ -519,7 +598,11 @@ sudo cp /var/www/html/admin/scripts/lua/sidebar.lp.backup-before-hwmon-YYYYMMDD-
 
 ## Remove only the custom block
 
-Edit:
+```bash
+sudo ./install-pihole-hwmon-sidebar.sh uninstall
+```
+
+Or manually edit:
 
 ```bash
 sudo nano /var/www/html/admin/scripts/lua/sidebar.lp
@@ -536,47 +619,6 @@ and:
 ```html
 <!-- END CUSTOM HWMON -->
 ```
-
----
-
-## Disable timer
-
-```bash
-sudo systemctl disable --now pi-hwmon-json.timer
-```
-
----
-
-## Remove installed files
-
-```bash
-sudo rm -f /usr/local/bin/pi-hwmon-json
-sudo rm -f /etc/systemd/system/pi-hwmon-json.service
-sudo rm -f /etc/systemd/system/pi-hwmon-json.timer
-sudo rm -f /var/www/html/admin/custom/pi-hwmon.json
-sudo systemctl daemon-reload
-```
-
-Optional:
-
-```bash
-sudo rmdir /var/www/html/admin/custom 2>/dev/null || true
-```
-
----
-
-# Full Clean Removal
-
-```bash
-sudo systemctl disable --now pi-hwmon-json.timer
-sudo rm -f /usr/local/bin/pi-hwmon-json
-sudo rm -f /etc/systemd/system/pi-hwmon-json.service
-sudo rm -f /etc/systemd/system/pi-hwmon-json.timer
-sudo rm -f /var/www/html/admin/custom/pi-hwmon.json
-sudo systemctl daemon-reload
-```
-
-Restore the sidebar backup afterward.
 
 ---
 
@@ -639,4 +681,6 @@ Pi-hole sidebar:
 - No PHP or CGI execution is required
 - The customization only reads sensor data
 - Re-running the installer after Pi-hole updates should restore the customization
-```
+- Uninstall safely removes installed components without deleting sidebar backups
+- Existing custom blocks are replaced automatically during reinstall
+- The installer supports alternate Pi-hole admin paths via `SIDEBAR_FILE`
