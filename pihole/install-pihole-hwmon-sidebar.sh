@@ -138,11 +138,21 @@ python3 - "\$TMP" <<'PY'
 import glob
 import json
 import os
+import re
+import subprocess
 import sys
 from pathlib import Path
 
 out_path = Path(sys.argv[1])
-temp_path = Path("/sys/class/thermal/thermal_zone0/temp")
+
+PI_TEMP_KEYWORDS = (
+    "cpu",
+    "soc",
+    "bcm",
+    "bcm2835",
+    "rpi",
+    "raspberry",
+)
 
 
 def read_trimmed(path):
@@ -152,17 +162,159 @@ def read_trimmed(path):
         return ""
 
 
+def parse_millidegree(raw):
+    if not raw:
+        return None
+
+    raw = raw.strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+
+    if value > 1000:
+        value = value / 1000
+
+    if value < -40 or value > 125:
+        return None
+
+    return value
+
+
+def source_priority(label):
+    normalized = label.lower()
+
+    for index, keyword in enumerate(PI_TEMP_KEYWORDS):
+        if keyword in normalized:
+            return index
+
+    return len(PI_TEMP_KEYWORDS)
+
+
+def append_temperature(candidates, label, path, raw, source_type):
+    celsius = parse_millidegree(raw)
+    if celsius is None:
+        return
+
+    candidates.append({
+        "label": label or "Temperature",
+        "path": path,
+        "source": source_type,
+        "c": round(celsius, 1),
+        "priority": source_priority(label or path),
+    })
+
+
+def collect_thermal_temperatures():
+    candidates = []
+
+    for temp_path in sorted(glob.glob("/sys/class/thermal/thermal_zone*/temp")):
+        zone_dir = os.path.dirname(temp_path)
+        zone_type = read_trimmed(os.path.join(zone_dir, "type")) or os.path.basename(zone_dir)
+        append_temperature(candidates, zone_type, temp_path, read_trimmed(temp_path), "thermal_zone")
+
+    return candidates
+
+
+def collect_hwmon_temperatures():
+    candidates = []
+
+    for temp_path in sorted(glob.glob("/sys/class/hwmon/hwmon*/temp*_input")):
+        hwmon_dir = os.path.dirname(temp_path)
+        temp_file = os.path.basename(temp_path)
+        temp_num = temp_file.removeprefix("temp").removesuffix("_input")
+        hwmon_name = read_trimmed(os.path.join(hwmon_dir, "name"))
+        temp_label = read_trimmed(os.path.join(hwmon_dir, f"temp{temp_num}_label"))
+        label_parts = [part for part in (hwmon_name, temp_label or f"temp{temp_num}") if part]
+        label = " ".join(label_parts) if label_parts else f"Temperature {temp_num}"
+        append_temperature(candidates, label, temp_path, read_trimmed(temp_path), "hwmon")
+
+    return candidates
+
+
+def collect_vcgencmd_temperature():
+    try:
+        result = subprocess.run(
+            ["vcgencmd", "measure_temp"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    match = re.search(r"temp=([-+]?[0-9]+(?:\.[0-9]+)?)", result.stdout)
+    if not match:
+        return []
+
+    celsius = parse_millidegree(match.group(1))
+    if celsius is None:
+        return []
+
+    return [{
+        "label": "vcgencmd measure_temp",
+        "path": "vcgencmd measure_temp",
+        "source": "vcgencmd",
+        "c": round(celsius, 1),
+        "priority": 0,
+    }]
+
+
+def select_temperature():
+    candidates = []
+    candidates.extend(collect_thermal_temperatures())
+    candidates.extend(collect_hwmon_temperatures())
+
+    if not candidates:
+        candidates.extend(collect_vcgencmd_temperature())
+
+    temperature = {
+        "c": None,
+        "f": None,
+        "path": "",
+        "label": "",
+        "source": "",
+    }
+
+    if not candidates:
+        return temperature
+
+    selected = sorted(candidates, key=lambda item: (item["priority"], item["source"], item["path"]))[0]
+    temperature["c"] = selected["c"]
+    temperature["f"] = round((selected["c"] * 9 / 5) + 32, 1)
+    temperature["path"] = selected["path"]
+    temperature["label"] = selected["label"]
+    temperature["source"] = selected["source"]
+
+    return temperature
+
+
+def detect_pi_model():
+    model = read_trimmed("/proc/device-tree/model").rstrip("\x00")
+    if model:
+        return model
+
+    for line in read_trimmed("/proc/cpuinfo").splitlines():
+        if line.lower().startswith("model"):
+            parts = line.split(":", 1)
+            if len(parts) == 2:
+                return parts[1].strip()
+
+    return ""
+
+
 temperature = {
     "c": None,
     "f": None,
-    "path": str(temp_path),
+    "path": "",
+    "label": "",
+    "source": "",
 }
-
-temp_raw = read_trimmed(temp_path)
-if temp_raw.isdigit():
-    celsius = int(temp_raw) / 1000
-    temperature["c"] = round(celsius, 1)
-    temperature["f"] = round((celsius * 9 / 5) + 32, 1)
+temperature = select_temperature()
 
 fans = []
 for fan_path in sorted(glob.glob("/sys/class/hwmon/hwmon*/fan*_input")):
@@ -174,19 +326,21 @@ for fan_path in sorted(glob.glob("/sys/class/hwmon/hwmon*/fan*_input")):
     fan_file = os.path.basename(fan_path)
     fan_num = fan_file.removeprefix("fan").removesuffix("_input")
     hwmon_dir = os.path.dirname(fan_path)
+    hwmon_name = read_trimmed(os.path.join(hwmon_dir, "name"))
     label = read_trimmed(os.path.join(hwmon_dir, f"fan{fan_num}_label"))
 
     if not label:
-        hwmon_name = read_trimmed(os.path.join(hwmon_dir, "name"))
         label = f"{hwmon_name} fan{fan_num}" if hwmon_name else f"Fan {fan_num}"
 
     fans.append({
         "label": label,
         "rpm": rpm,
         "path": fan_path,
+        "source": hwmon_name or "hwmon",
     })
 
 payload = {
+    "model": detect_pi_model(),
     "temperature": temperature,
     "fans": fans,
 }
@@ -250,25 +404,48 @@ end = "<!-- END CUSTOM HWMON -->"
 if begin not in snippet or end not in snippet:
     raise SystemExit("ERROR: Snippet must contain BEGIN CUSTOM HWMON and END CUSTOM HWMON markers.")
 
-if begin in sidebar and end in sidebar:
-    start = sidebar.index(begin)
-    finish = sidebar.index(end, start) + len(end)
-    sidebar = sidebar[:start] + snippet.rstrip() + sidebar[finish:]
-else:
+def remove_marked_blocks(text, block_begin, block_end):
+    removed = 0
+
+    while block_begin in text and block_end in text:
+        start = text.index(block_begin)
+        finish = text.index(block_end, start) + len(block_end)
+        text = text[:start].rstrip() + "\n" + text[finish:].lstrip("\n")
+        removed += 1
+
+    if block_begin in text or block_end in text:
+        raise SystemExit("ERROR: Found an incomplete custom hardware monitor block in sidebar.lp.")
+
+    return text, removed
+
+def remove_legacy_block(text):
     old_begin = '<span id="temperatureF">'
     old_end = '<!-- END CUSTOM TEMP -->'
+    removed = 0
 
-    if old_begin in sidebar and old_end in sidebar:
-        start = sidebar.index(old_begin)
-        finish = sidebar.index(old_end, start) + len(old_end)
-        sidebar = sidebar[:start] + snippet.rstrip() + sidebar[finish:]
-    else:
-        marker = '<span id="memory"></span>'
-        if marker not in sidebar:
-            raise SystemExit("ERROR: Could not find existing custom block or insertion marker in sidebar.lp.")
+    while old_begin in text and old_end in text:
+        start = text.index(old_begin)
+        finish = text.index(old_end, start) + len(old_end)
+        text = text[:start].rstrip() + "\n" + text[finish:].lstrip("\n")
+        removed += 1
 
-        insert_at = sidebar.index(marker) + len(marker)
-        sidebar = sidebar[:insert_at] + "\n" + snippet.rstrip() + "\n" + sidebar[insert_at:]
+    if old_begin in text or old_end in text:
+        raise SystemExit("ERROR: Found an incomplete legacy custom temperature block in sidebar.lp.")
+
+    return text, removed
+
+sidebar, removed_hwmon = remove_marked_blocks(sidebar, begin, end)
+sidebar, removed_legacy = remove_legacy_block(sidebar)
+
+marker = '<span id="memory"></span>'
+if marker not in sidebar:
+    raise SystemExit("ERROR: Could not find insertion marker in sidebar.lp.")
+
+insert_at = sidebar.index(marker) + len(marker)
+sidebar = sidebar[:insert_at] + "\n" + snippet.rstrip() + "\n" + sidebar[insert_at:]
+
+if removed_hwmon or removed_legacy:
+    print(f"Replaced {removed_hwmon} hardware monitor block(s) and {removed_legacy} legacy block(s).")
 
 sidebar_path.write_text(sidebar, encoding="utf-8")
 PY
@@ -290,9 +467,10 @@ begin = "<!-- BEGIN CUSTOM HWMON -->"
 end = "<!-- END CUSTOM HWMON -->"
 
 if begin in sidebar and end in sidebar:
-    start = sidebar.index(begin)
-    finish = sidebar.index(end, start) + len(end)
-    sidebar = sidebar[:start].rstrip() + "\n" + sidebar[finish:].lstrip("\n")
+    while begin in sidebar and end in sidebar:
+        start = sidebar.index(begin)
+        finish = sidebar.index(end, start) + len(end)
+        sidebar = sidebar[:start].rstrip() + "\n" + sidebar[finish:].lstrip("\n")
     sidebar_path.write_text(sidebar, encoding="utf-8")
 else:
     print("No custom hardware monitor block found in sidebar.")
