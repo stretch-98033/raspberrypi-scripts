@@ -18,7 +18,7 @@
 <script>
 (function () {
   const ENDPOINT = "/admin/custom/pi-hwmon.json";
-  const REFRESH_MS = 3000;
+  const REFRESH_MS = 15000;
 
   function temperatureIconClass(celsius) {
     if (celsius >= 80) {
@@ -71,12 +71,12 @@
 
     if (tempIconF) {
       tempIconF.className = iconClass;
-      tempIconF.title = "Temperature Source: " + temperature.path;
+      tempIconF.title = "Temperature Source: " + [temperature.label, temperature.path].filter(Boolean).join(" - ");
     }
 
     if (tempIconC) {
       tempIconC.className = iconClass;
-      tempIconC.title = "Temperature Source: " + temperature.path;
+      tempIconC.title = "Temperature Source: " + [temperature.label, temperature.path].filter(Boolean).join(" - ");
     }
 
     if (tempTextF) {
@@ -98,9 +98,9 @@
 
     if (!Array.isArray(fans) || fans.length === 0) {
       fanIcon.className = "fa-solid fa-fan text-red fa-lg";
-      fanIcon.title = "No fan sensors found under /sys/class/hwmon";
+      fanIcon.title = "No RPM-capable fan sensors found under /sys/class/hwmon";
       fanText.className = "text-red text-base";
-      fanText.innerText = "Fan Speed: No fan sensors found";
+      fanText.innerText = "Fan Speed: No RPM sensor found";
       return;
     }
 
